@@ -100,7 +100,8 @@
   function renderMembers() {
     const names=new Map(); (trainerData?.bookings||[]).forEach(b=>{if(!names.has(norm(b.member_name)))names.set(norm(b.member_name),b.member_name)}); (trainerData?.events||[]).forEach(e=>{if(!names.has(norm(e.member_name)))names.set(norm(e.member_name),e.member_name)});
     const list=[...names.values()].sort((a,b)=>a.localeCompare(b,'es'));
-    $('historyMembers').innerHTML=list.length?'<h3>Socios</h3>'+list.map(name=>`<button class="member-choice ${historyName&&norm(historyName)===norm(name)?'active':''}" type="button" data-member="${escapeHtml(name)}">${escapeHtml(name)}<small>Ver reservas, cancelaciones y faltas</small></button>`).join(''):'<div class="empty">Todavía no hay socios en el historial.</div>';
+    const owner=trainerData?.is_owner===true;
+    $('historyMembers').innerHTML=`<h3>Socios</h3>${owner?'<button class="markabsence" type="button" data-delete-all-history>Borrar todos los socios e historiales</button>':''}${list.length?list.map(name=>`<button class="member-choice ${historyName&&norm(historyName)===norm(name)?'active':''}" type="button" data-member="${escapeHtml(name)}">${escapeHtml(name)}<small>Ver reservas, cancelaciones y faltas</small></button>`).join(''):'<div class="empty">Todavía no hay socios en el historial.</div>'}`;
     if(historyName) renderMemberHistory(historyName); else $('historyView').innerHTML='<div class="empty">Selecciona un socio para ver su historial.</div>';
   }
   function renderMemberHistory(name) {
@@ -112,7 +113,8 @@
       const labels={reservation:'Reservó',cancellation:e.late?'Canceló dentro de las 2 horas previas':'Canceló',absence:'Falta marcada por entrenador',absence_reversed:'Falta corregida'};
       return `<div class="historyevent">${labels[e.event_type]||escapeHtml(e.event_type)}<small>${escapeHtml(displayDate(fromIsoDate(e.class_date)))} · ${TIMES[Number(e.class_slot)]} · Registro: ${escapeHtml(new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(e.created_at)))}</small></div>`;
     }).join('');
-    $('historyView').innerHTML=`<h3>Historial de ${escapeHtml(name)}</h3><div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Faltas actuales: <strong>${counts.absence}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
+    const deleteButton=trainerData?.is_owner===true?'<button class="markabsence" type="button" data-delete-member-history>Borrar socio y su historial</button>':'';
+    $('historyView').innerHTML=`<h3>Historial de ${escapeHtml(name)}</h3>${deleteButton}<div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Faltas actuales: <strong>${counts.absence}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
   }
   function renderTrainerView() {
     $('roster').hidden=trainerView!=='roster'; $('lateList').hidden=trainerView!=='late'; $('historyMembers').hidden=trainerView!=='history'; $('historyView').hidden=trainerView!=='history';
@@ -179,6 +181,26 @@
   $('showHistory').onclick=()=>changeTrainerView('history');
   $('logoutTrainer').onclick=()=>setTrainerPanel(false);
   $('historyMembers').onclick=e=>{const button=e.target.closest('[data-member]');if(!button)return;historyName=button.dataset.member;renderMembers();};
+  $('historyView').onclick=async e=>{
+    const button=e.target.closest('[data-delete-member-history]');if(!button)return;
+    if(trainerData?.is_owner!==true){notify('Solo Fernando puede borrar historiales de socios.');return;}
+    const name=historyName;if(!name)return;
+    if(!window.confirm(`Vas a borrar el socio «${name}», todas sus reservas activas y todo su historial. Esta acción no se puede deshacer. ¿Quieres continuar?`))return;
+    button.disabled=true;
+    const {error}=await db.rpc('trainer_delete_member_history',{p_key:trainerKey,p_member_name:name});
+    if(error){showDbError(error);button.disabled=false;return;}
+    historyName='';await fetchTrainerData();renderTrainerView();await loadCounts();notify(`Se ha borrado el socio «${name}» y todo su historial.`);
+  };
+  $('historyMembers').addEventListener('click',async e=>{
+    const button=e.target.closest('[data-delete-all-history]');if(!button)return;
+    if(trainerData?.is_owner!==true){notify('Solo Fernando puede borrar todos los historiales.');return;}
+    const total=new Set([...(trainerData.bookings||[]).map(b=>norm(b.member_name)),...(trainerData.events||[]).map(event=>norm(event.member_name))]).size;
+    if(!window.confirm(`Vas a borrar los ${total} socios, todas sus reservas activas y todos los historiales. Esta acción no se puede deshacer. ¿Quieres continuar?`))return;
+    button.disabled=true;
+    const {error}=await db.rpc('trainer_delete_all_member_history',{p_key:trainerKey});
+    if(error){showDbError(error);button.disabled=false;return;}
+    historyName='';await fetchTrainerData();renderTrainerView();await loadCounts();notify('Se han borrado todos los socios, sus reservas y sus historiales.');
+  });
   $('roster').onclick=async e=>{
     const button=e.target.closest('[data-action]');if(!button)return;const bookingId=button.closest('[data-booking]').dataset.booking,action=button.dataset.action;
     if(action==='cancel-booking'){
