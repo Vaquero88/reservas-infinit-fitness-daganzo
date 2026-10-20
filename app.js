@@ -123,7 +123,7 @@
     const names=new Map(); (trainerData?.members||[]).forEach(m=>{if(!names.has(norm(m.member_name)))names.set(norm(m.member_name),m.member_name)}); (trainerData?.bookings||[]).forEach(b=>{if(!names.has(norm(b.member_name)))names.set(norm(b.member_name),b.member_name)}); (trainerData?.events||[]).forEach(e=>{if(!names.has(norm(e.member_name)))names.set(norm(e.member_name),e.member_name)});
     const list=[...names.values()].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
     const owner=trainerData?.is_owner===true;
-    $('historyMembers').innerHTML=`<h3>Socios</h3>${owner?'<button class="markabsence delete-history" type="button" data-delete-all-history>Borrar todos los socios e historiales</button>':''}${list.length?'<div class="member-list">'+list.map(name=>{const active=historyName&&norm(historyName)===norm(name);return `<div class="member-row"><button class="member-choice ${active?'active':''}" type="button" data-member="${escapeHtml(name)}"><span>${escapeHtml(name)}</span><span class="member-expand">${active?'Cerrar historial':'Ver historial'}</span></button>${active?`<div class="member-history-inline">${renderMemberHistory(name)}</div>`:''}</div>`}).join('')+'</div>':'<div class="empty">Todavía no hay socios en el historial.</div>'}`;
+    $('historyMembers').innerHTML=`<h3>Socios</h3>${owner?'<button class="markabsence delete-history" type="button" data-clear-all-history>Borrar todos los historiales</button>':''}${list.length?'<div class="member-list">'+list.map(name=>{const active=historyName&&norm(historyName)===norm(name);return `<div class="member-row"><button class="member-choice ${active?'active':''}" type="button" data-member="${escapeHtml(name)}"><span>${escapeHtml(name)}</span><span class="member-expand">${active?'Cerrar historial':'Ver historial'}</span></button>${active?`<div class="member-history-inline">${renderMemberHistory(name)}</div>`:''}</div>`}).join('')+'</div>':'<div class="empty">Todavía no hay socios en el historial.</div>'}`;
     $('historyView').innerHTML='';
   }
   function renderMemberHistory(name) {
@@ -135,8 +135,8 @@
       const labels={reservation:'Reservó',cancellation:e.late?'Canceló con menos de dos horas de antelación':'Canceló',absence:'Falta marcada por entrenador',absence_reversed:'Falta corregida'};
       return `<div class="historyevent">${labels[e.event_type]||escapeHtml(e.event_type)}<small>${escapeHtml(displayDate(fromIsoDate(e.class_date)))} · ${TIMES[Number(e.class_slot)]} · Registro: ${escapeHtml(new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(e.created_at)))}</small></div>`;
     }).join('');
-    const deleteButton=trainerData?.is_owner===true?'<button class="markabsence delete-history" type="button" data-delete-member-history>Borrar socio y su historial</button>':'';
-    return `<h3>Historial de ${escapeHtml(name)}</h3>${deleteButton}<div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Faltas actuales: <strong>${counts.absence}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
+    const deleteButtons=trainerData?.is_owner===true?'<div class="history-actions"><button class="markabsence delete-history" type="button" data-clear-member-history>Borrar historial del socio</button><button class="markabsence delete-history" type="button" data-delete-member-history>Borrar socio y su historial</button></div>':'';
+    return `<h3>Historial de ${escapeHtml(name)}</h3>${deleteButtons}<div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Faltas actuales: <strong>${counts.absence}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
   }
   function renderTrainerView() {
     $('showAddMember').hidden=trainerData?.is_owner!==true;
@@ -215,6 +215,15 @@
   $('newMemberName').onkeydown=e=>{if(e.key==='Enter')$('addMemberButton').click();};
   $('logoutTrainer').onclick=()=>setTrainerPanel(false);
   $('historyMembers').onclick=async e=>{
+    const clearOne=e.target.closest('[data-clear-member-history]');
+    if(clearOne){
+      if(trainerData?.is_owner!==true){notify('Solo Fernando puede borrar historiales de socios.');return;}
+      const name=historyName;if(!name)return;
+      if(!window.confirm(`Vas a borrar únicamente el historial de «${name}». El socio y sus reservas activas se conservarán. Esta acción no se puede deshacer. ¿Quieres continuar?`))return;
+      clearOne.disabled=true;const {error}=await db.rpc('trainer_clear_member_history',{p_key:trainerKey,p_member_name:name});
+      if(error){showDbError(error);clearOne.disabled=false;return;}
+      await fetchTrainerData();renderTrainerView();notify(`Se ha borrado el historial de «${name}». El socio y sus reservas siguen activos.`);return;
+    }
     const deleteOne=e.target.closest('[data-delete-member-history]');
     if(deleteOne){
       if(trainerData?.is_owner!==true){notify('Solo Fernando puede borrar historiales de socios.');return;}
@@ -224,17 +233,14 @@
       if(error){showDbError(error);deleteOne.disabled=false;return;}
       historyName='';await fetchTrainerData();renderTrainerView();await loadCounts();notify(`Se ha borrado el socio «${name}» y todo su historial.`);return;
     }
-    const deleteAll=e.target.closest('[data-delete-all-history]');
-    if(deleteAll){
+    const clearAll=e.target.closest('[data-clear-all-history]');
+    if(clearAll){
       if(trainerData?.is_owner!==true){notify('Solo Fernando puede borrar todos los historiales.');return;}
-      const names=[...new Map([...(trainerData.members||[]).map(m=>[norm(m.member_name),m.member_name]),...(trainerData.bookings||[]).map(b=>[norm(b.member_name),b.member_name]),...(trainerData.events||[]).map(event=>[norm(event.member_name),event.member_name])]).values()];
-      if(!window.confirm(`Vas a borrar los ${names.length} socios, todas sus reservas activas y todos los historiales. Esta acción no se puede deshacer. ¿Quieres continuar?`))return;
-      deleteAll.disabled=true;
-      for(const name of names){
-        const {error}=await db.rpc('trainer_delete_member_history',{p_key:trainerKey,p_member_name:name});
-        if(error){showDbError(new Error(`Se habían borrado algunos historiales, pero falló el borrado de «${name}». ${error.message||''}`));deleteAll.disabled=false;await fetchTrainerData();renderTrainerView();await loadCounts();return;}
-      }
-      historyName='';await fetchTrainerData();renderTrainerView();await loadCounts();notify('Se han borrado todos los socios, sus reservas y sus historiales.');return;
+      if(!window.confirm('Vas a borrar todos los historiales de los socios. Se conservarán los socios dados de alta y todas las reservas activas. Esta acción no se puede deshacer. ¿Quieres continuar?'))return;
+      clearAll.disabled=true;
+      const {error}=await db.rpc('trainer_clear_all_member_history',{p_key:trainerKey});
+      if(error){showDbError(error);clearAll.disabled=false;return;}
+      await fetchTrainerData();renderTrainerView();notify('Se han borrado todos los historiales. Los socios y las reservas activas se han conservado.');return;
     }
     const member=e.target.closest('[data-member]');if(!member)return;
     historyName=norm(historyName)===norm(member.dataset.member)?'':member.dataset.member;renderMembers();
