@@ -62,7 +62,21 @@
     }).join('');
     $('classlist').querySelectorAll('[data-slot]').forEach(button=>button.onclick=()=>{selectedSlot=Number(button.dataset.slot);renderClasses();syncReserveButton();});
   }
-  function syncReserveButton() { const full=selected&&selectedSlot!==null&&(counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0; $('reserve').disabled=!ready||selectedSlot===null||!selected||!validName($('memberName').value)||full; }
+  function syncReserveButton() {
+    const name=$('memberName').value.trim().replace(/\s+/g,' '), parts=name?name.split(' '):[];
+    const full=Boolean(selected&&selectedSlot!==null&&(counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0);
+    const reasons=[];
+    if(!ready) reasons.push('Las reservas no están disponibles ahora mismo.');
+    else {
+      if(parts.length===0) reasons.push('Escribe tu nombre y tus dos apellidos.');
+      else if(parts.length===1) reasons.push('Añade tus dos apellidos.');
+      else if(parts.length===2) reasons.push('Te falta el segundo apellido.');
+      if(!selected||selectedSlot===null) reasons.push('Selecciona una clase.');
+      if(full) reasons.push('Esta clase está completa; elige otra.');
+    }
+    const help=$('bookingHelp'); help.textContent=reasons.join(' '); help.hidden=reasons.length===0;
+    $('reserve').disabled=!ready||selectedSlot===null||!selected||parts.length<3||full;
+  }
   function render() { renderCalendar(); renderClasses(); syncReserveButton(); }
   function openBookingConfirmation(date,slot) {
     $('confirmationTime').textContent=TIMES[slot];
@@ -126,7 +140,7 @@
   }
   $('prev').onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()-1,1);render();loadCounts();};
   $('next').onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()+1,1);render();loadCounts();};
-  $('days').onclick=e=>{const el=e.target.closest('[data-day]');if(!el)return;const d=new Date(view.getFullYear(),view.getMonth(),Number(el.dataset.day));if(!isBookable(d))return;selected=d;selectedSlot=null;renderCalendar();renderClasses();$('reserve').disabled=true;};
+  $('days').onclick=e=>{const el=e.target.closest('[data-day]');if(!el)return;const d=new Date(view.getFullYear(),view.getMonth(),Number(el.dataset.day));if(!isBookable(d))return;selected=d;selectedSlot=null;renderCalendar();renderClasses();syncReserveButton();};
   $('memberName').oninput=syncReserveButton;
   $('reserve').onclick=async()=>{
     if(!ready||selectedSlot===null||!selected)return;
