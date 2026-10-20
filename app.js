@@ -1,6 +1,7 @@
 (() => {
   const TIMES = ['09:00 – 10:00', '18:00 – 18:30', '20:30 – 21:00'];
   const END_TIMES = ['10:00', '18:30', '21:00'];
+  const MAX_CAPACITY = 6;
   const config = window.GYM_CONFIG || {};
   const ready = Boolean(window.supabase?.createClient && config.supabaseUrl && config.supabasePublishableKey && !config.supabaseUrl.includes('PEGA_AQUI') && !config.supabasePublishableKey.includes('PEGA_AQUI'));
   const db = ready ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey) : null;
@@ -26,8 +27,8 @@
     const start=new Date(view.getFullYear(),view.getMonth(),1), end=new Date(view.getFullYear(),view.getMonth()+1,0);
     const {data,error}=await db.rpc('get_class_counts',{p_start_date:dateKey(start),p_end_date:dateKey(end)});
     if(error){showDbError(error);return;}
-    counts={}; (data||[]).forEach(row=>{counts[classKey(row.class_date,Number(row.class_slot))]=Number(row.reservations_count)});
-    renderCalendar(); if(selected) renderClasses();
+    counts={}; (data||[]).forEach(row=>{counts[classKey(row.class_date,Number(row.class_slot))]=Number(row.remaining_places)});
+    renderCalendar(); if(selected) renderClasses(); syncReserveButton();
   }
   function renderCalendar() {
     const year=view.getFullYear(), month=view.getMonth();
@@ -37,8 +38,14 @@
     for(let i=0;i<offset;i++) html+='<div class="day blank"></div>';
     for(let d=1;d<=total;d++) {
       const date=new Date(year,month,d), weekend=[0,6].includes(date.getDay()), past=localDay(date)<localDay(new Date()), closed=!isBookable(date), today=dateKey(date)===dateKey(new Date()), active=selected&&dateKey(date)===dateKey(selected);
-      let count=0; if(!weekend) TIMES.forEach((_,slot)=>count+=counts[classKey(dateKey(date),slot)]||0);
-      html+=`<div class="day ${weekend?'weekend':''} ${past?'past':''} ${closed?'closed':''} ${today?'today':''} ${active?'selected':''}" data-day="${d}" title="${closed?'Reservas disponibles con hasta 7 días de antelación':''}" ${weekend||closed?'aria-disabled="true"':''}><span class="num">${d}</span>${count?`<span class="count">${count} ${count===1?'apuntado':'apuntados'}</span>`:''}</div>`;
+      let remainingClasses=0;
+      if(!weekend&&!closed) TIMES.forEach((_,slot)=>{
+        const hasStarted=classStart(date,slot)<=new Date(), remaining=counts[classKey(dateKey(date),slot)]??MAX_CAPACITY;
+        if(!hasStarted&&remaining>0)remainingClasses++;
+      });
+      const hasAvailability=!weekend&&!closed&&remainingClasses>0;
+      const availabilityLabel=weekend||closed?'':`<span class="day-status ${hasAvailability?'available':'unavailable'}">${hasAvailability?'Clases disponibles':'No hay clases disponibles'}</span>`;
+      html+=`<div class="day ${weekend?'weekend':''} ${past?'past':''} ${closed?'closed':''} ${today?'today':''} ${active?'selected':''} ${availabilityLabel?(hasAvailability?'availability-yes':'availability-no'):''}" data-day="${d}" title="${closed?'Reservas disponibles con hasta 7 días de antelación':''}" ${weekend||closed?'aria-disabled="true"':''}><span class="num">${d}</span>${availabilityLabel}</div>`;
     }
     $('days').innerHTML=html;
   }
@@ -48,12 +55,14 @@
     $('dayCaption').textContent=weekend?'No hay clases los fines de semana':'Reserva con hasta 7 días de antelación';
     if(!ready){$('classlist').innerHTML='<div class="empty">Falta configurar la base de datos compartida.</div>';return;}
     $('classlist').innerHTML=weekend?'<div class="empty">Las clases son de lunes a viernes.</div>':TIMES.map((time,slot)=>{
-      const count=counts[classKey(dateKey(selected),slot)]||0, past=classStart(selected,slot)<=new Date();
-      return `<button class="slot ${selectedSlot===slot?'selected':''} ${past?'disabled':''}" data-slot="${slot}" ${past?'disabled':''}><span class="slotleft"><i class="timeicon">◷</i><span><strong>${time}</strong><small>Entrenamiento en grupo</small></span></span><span class="occupancy"><b>${count}</b>${count===1?'persona':'personas'}</span></button>`;
+      const remaining=counts[classKey(dateKey(selected),slot)]??MAX_CAPACITY, past=classStart(selected,slot)<=new Date();
+      const full=remaining<=0;
+      return `<button class="slot ${selectedSlot===slot?'selected':''} ${past?'disabled':''} ${full?'full':''}" data-slot="${slot}" ${past||full?'disabled':''}><span class="slotleft"><i class="timeicon">◷</i><span><strong>${time}</strong><small>${full?'Clase completa':'Entrenamiento en grupo'}</small></span></span><span class="occupancy"><b>${remaining}</b>${remaining===1?'plaza restante':'plazas restantes'}</span></button>`;
     }).join('');
-    $('classlist').querySelectorAll('[data-slot]').forEach(button=>button.onclick=()=>{selectedSlot=Number(button.dataset.slot);renderClasses();$('reserve').disabled=!validName($('memberName').value)});
+    $('classlist').querySelectorAll('[data-slot]').forEach(button=>button.onclick=()=>{selectedSlot=Number(button.dataset.slot);renderClasses();syncReserveButton();});
   }
-  function render() { renderCalendar(); renderClasses(); $('reserve').disabled=!ready||selectedSlot===null||!selected||!validName($('memberName').value); }
+  function syncReserveButton() { const full=selected&&selectedSlot!==null&&(counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0; $('reserve').disabled=!ready||selectedSlot===null||!selected||!validName($('memberName').value)||full; }
+  function render() { renderCalendar(); renderClasses(); syncReserveButton(); }
   function setTrainerPanel(authorized) { $('trainerLogin').hidden=authorized; $('trainerPanel').hidden=!authorized; if(!authorized){trainerKey='';trainerData=null;historyName='';$('roster').innerHTML='';$('lateList').innerHTML='';$('historyMembers').innerHTML='';$('historyView').innerHTML='';} }
   async function fetchTrainerData() {
     const {data,error}=await db.rpc('trainer_data',{p_key:trainerKey}); if(error) throw error;
@@ -109,14 +118,15 @@
   $('prev').onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()-1,1);render();loadCounts();};
   $('next').onclick=()=>{view=new Date(view.getFullYear(),view.getMonth()+1,1);render();loadCounts();};
   $('days').onclick=e=>{const el=e.target.closest('[data-day]');if(!el)return;const d=new Date(view.getFullYear(),view.getMonth(),Number(el.dataset.day));if(!isBookable(d))return;selected=d;selectedSlot=null;renderCalendar();renderClasses();$('reserve').disabled=true;};
-  $('memberName').oninput=()=>{$('reserve').disabled=!ready||selectedSlot===null||!selected||!validName($('memberName').value);};
+  $('memberName').oninput=syncReserveButton;
   $('reserve').onclick=async()=>{
     if(!ready||selectedSlot===null||!selected)return;
     if(!validName($('memberName').value)){notify('Escribe tu nombre y tus dos apellidos.');return;}
     if(!isBookable(selected)){notify('Solo se puede reservar con hasta 7 días de antelación.');return;}
+    if((counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0){notify('Esta clase ya ha alcanzado el máximo de 6 personas.');await loadCounts();return;}
     const name=$('memberName').value.trim().replace(/\s+/g,' '); $('reserve').disabled=true;
     const {error}=await db.rpc('reserve_class',{p_class_date:dateKey(selected),p_slot:selectedSlot,p_member_name:name});
-    if(error){showDbError(error);$('reserve').disabled=false;return;}
+    if(error){showDbError(error);await loadCounts();return;}
     $('memberName').value='';selectedSlot=null;notify('¡Reserva confirmada! Nos vemos en clase.');await loadCounts();render();
   };
   async function loadMyBookings() {
