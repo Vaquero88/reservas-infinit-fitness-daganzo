@@ -14,7 +14,8 @@
   const norm = s => String(s || '').trim().replace(/\s+/g, ' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const escapeHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const validName = s => String(s || '').trim().split(/\s+/).filter(Boolean).length >= 3;
-  function notify(message) { const n=$('notice'); n.textContent=message; n.classList.add('show'); setTimeout(()=>n.classList.remove('show'),3200); }
+  function notify(message) { $('noticeText').textContent=message; $('notice').classList.add('show'); $('noticeClose').focus(); }
+  function closeNotice() { $('notice').classList.remove('show'); }
   function showDbError(error) { console.error(error); notify(error?.message || 'No se pudo conectar con las reservas.'); }
   function localDay(date) { return new Date(date.getFullYear(),date.getMonth(),date.getDate()); }
   function isBookable(date) { const today=localDay(new Date()), limit=new Date(today); limit.setDate(limit.getDate()+7); const day=localDay(date); return day>=today && day<=limit; }
@@ -56,13 +57,19 @@
     if(!ready){$('classlist').innerHTML='<div class="empty">Falta configurar la base de datos compartida.</div>';return;}
     $('classlist').innerHTML=weekend?'<div class="empty">Las clases son de lunes a viernes.</div>':TIMES.map((time,slot)=>{
       const remaining=counts[classKey(dateKey(selected),slot)]??MAX_CAPACITY, past=classStart(selected,slot)<=new Date();
-      const full=remaining<=0;
-      return `<button class="slot ${selectedSlot===slot?'selected':''} ${past?'disabled':''} ${full?'full':''}" data-slot="${slot}" ${past||full?'disabled':''}><span class="slotleft"><i class="timeicon">◷</i><span><strong>${time}</strong><small>${full?'Clase completa':'Entrenamiento en grupo'}</small></span></span><span class="occupancy"><b>${remaining}</b>${remaining===1?'plaza restante':'plazas restantes'}</span></button>`;
+      const full=remaining<=0, low=remaining>0&&remaining<=2;
+      return `<button class="slot ${selectedSlot===slot?'selected':''} ${past?'disabled':''} ${full?'full':''} ${low?'low':''}" data-slot="${slot}" ${past||full?'disabled':''}><span class="slotleft"><i class="timeicon">◷</i><span><strong>${time}</strong><small>${full?'Clase completa':'Entrenamiento en grupo'}</small></span></span><span class="occupancy"><b>${remaining}</b>${remaining===1?'plaza restante':'plazas restantes'}</span></button>`;
     }).join('');
     $('classlist').querySelectorAll('[data-slot]').forEach(button=>button.onclick=()=>{selectedSlot=Number(button.dataset.slot);renderClasses();syncReserveButton();});
   }
   function syncReserveButton() { const full=selected&&selectedSlot!==null&&(counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0; $('reserve').disabled=!ready||selectedSlot===null||!selected||!validName($('memberName').value)||full; }
   function render() { renderCalendar(); renderClasses(); syncReserveButton(); }
+  function openBookingConfirmation(date,slot) {
+    $('confirmationTime').textContent=TIMES[slot];
+    $('confirmationDate').textContent=displayDate(date,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+    $('bookingConfirmation').classList.add('show'); $('closeBookingConfirmation').focus();
+  }
+  function closeBookingConfirmation() { $('bookingConfirmation').classList.remove('show'); }
   function setTrainerPanel(authorized) { $('trainerLogin').hidden=authorized; $('trainerPanel').hidden=!authorized; if(!authorized){trainerKey='';trainerData=null;historyName='';$('roster').innerHTML='';$('lateList').innerHTML='';$('historyMembers').innerHTML='';$('historyView').innerHTML='';} }
   async function fetchTrainerData() {
     const {data,error}=await db.rpc('trainer_data',{p_key:trainerKey}); if(error) throw error;
@@ -124,10 +131,11 @@
     if(!validName($('memberName').value)){notify('Escribe tu nombre y tus dos apellidos.');return;}
     if(!isBookable(selected)){notify('Solo se puede reservar con hasta 7 días de antelación.');return;}
     if((counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0){notify('Esta clase ya ha alcanzado el máximo de 6 personas.');await loadCounts();return;}
+    const bookedDate=new Date(selected.getFullYear(),selected.getMonth(),selected.getDate()), bookedSlot=selectedSlot;
     const name=$('memberName').value.trim().replace(/\s+/g,' '); $('reserve').disabled=true;
     const {error}=await db.rpc('reserve_class',{p_class_date:dateKey(selected),p_slot:selectedSlot,p_member_name:name});
     if(error){showDbError(error);await loadCounts();return;}
-    $('memberName').value='';selectedSlot=null;notify('¡Reserva confirmada! Nos vemos en clase.');await loadCounts();render();
+    $('memberName').value='';selectedSlot=null;await loadCounts();render();openBookingConfirmation(bookedDate,bookedSlot);
   };
   async function loadMyBookings() {
     if(!ready){notify('Falta conectar la base de datos compartida.');return;}
@@ -153,6 +161,11 @@
     await loadMyBookings(); await loadCounts(); render();
   };
   $('trainerOpen').onclick=()=>{$('trainerModal').classList.add('show');$('trainerName').focus();};
+  $('closeBookingConfirmation').onclick=closeBookingConfirmation;
+  $('bookingConfirmation').onclick=e=>{if(e.target===$('bookingConfirmation'))closeBookingConfirmation();};
+  $('noticeClose').onclick=closeNotice;
+  $('notice').onclick=e=>{if(e.target===$('notice'))closeNotice();};
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeBookingConfirmation();closeNotice();}});
   $('closeModal').onclick=()=>{$('trainerModal').classList.remove('show');setTrainerPanel(false);};
   $('trainerModal').onclick=e=>{if(e.target===$('trainerModal')){$('trainerModal').classList.remove('show');setTrainerPanel(false);}};
   window.gymTrainerLogin=async()=>{
