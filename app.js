@@ -6,7 +6,7 @@
   const ready = Boolean(window.supabase?.createClient && config.supabaseUrl && config.supabasePublishableKey && !config.supabaseUrl.includes('PEGA_AQUI') && !config.supabasePublishableKey.includes('PEGA_AQUI'));
   const db = ready ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey) : null;
   let view = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  let selected = null, selectedSlot = null, counts = {}, trainerKey = '', trainerData = null, trainerView = 'roster', historyName = '';
+  let selected = null, selectedSlot = null, counts = {}, trainerKey = '', trainerData = null, trainerView = 'roster', historyName = '', warningName = '';
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
   const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -92,7 +92,7 @@
     $('bookingConfirmation').classList.add('show'); $('closeBookingConfirmation').focus();
   }
   function closeBookingConfirmation() { $('bookingConfirmation').classList.remove('show'); }
-  function setTrainerPanel(authorized) { $('trainerLogin').hidden=authorized; $('trainerPanel').hidden=!authorized; if(!authorized){trainerKey='';trainerData=null;historyName='';$('roster').innerHTML='';$('lateList').innerHTML='';$('historyMembers').innerHTML='';$('historyView').innerHTML='';} }
+  function setTrainerPanel(authorized) { $('trainerLogin').hidden=authorized; $('trainerPanel').hidden=!authorized; if(!authorized){trainerKey='';trainerData=null;historyName='';warningName='';$('roster').innerHTML='';$('lateList').innerHTML='';$('historyMembers').innerHTML='';$('historyView').innerHTML='';$('warningMembers').innerHTML='';$('warningSessions').innerHTML='';} }
   async function fetchTrainerData() {
     const {data,error}=await db.rpc('trainer_data',{p_key:trainerKey}); if(error) throw error;
     trainerData=data||{bookings:[],events:[]}; return trainerData;
@@ -109,15 +109,40 @@
       const d=fromIsoDate(booking.class_date), slot=Number(booking.class_slot), group=`${booking.class_date}-${slot}`;
       if(group!==last){html+=`<div class="rosterclass">${escapeHtml(displayDate(d))} · ${TIMES[slot]}</div>`;last=group;}
       const ended=classHasEnded(d,slot), absent=currentAbsence(booking);
-      const control=absent?'<button class="markabsence" data-action="undo" type="button">Quitar falta</button>':ended?'<button class="markabsence" data-action="absence" type="button">Marcar falta</button>':'<span class="status">Pendiente</span>';
+      const control=absent?'<button class="markabsence" data-action="undo" type="button">Anular warning</button>':ended?'<span class="status">Clase finalizada</span>':'<span class="status">Pendiente</span>';
       const adminCancel=canManageBookings?'<button class="markabsence" data-action="cancel-booking" type="button">Cancelar reserva</button>':'';
-      html+=`<div class="rosterperson" data-booking="${escapeHtml(booking.id)}"><span>${escapeHtml(booking.member_name)}<small>${ended?'Clase finalizada':'Clase pendiente'}</small></span>${absent?'<span class="status absent">Falta registrada</span>':''}<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${adminCancel}${control}</span></div>`;
+      html+=`<div class="rosterperson" data-booking="${escapeHtml(booking.id)}"><span>${escapeHtml(booking.member_name)}<small>${ended?'Clase finalizada':'Clase pendiente'}</small></span>${absent?'<span class="status absent">Warning registrado</span>':''}<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${adminCancel}${control}</span></div>`;
     });
     $('roster').innerHTML=html;
   }
   function renderLate() {
     const late=(trainerData?.events||[]).filter(e=>e.event_type==='cancellation'&&e.late).sort((a,b)=>b.created_at.localeCompare(a.created_at));
     $('lateList').innerHTML=late.length?'<h3>Cancelaciones con menos de dos horas de antelación</h3>'+late.map(e=>`<div class="latecard"><strong>${escapeHtml(e.member_name)}</strong><div>${escapeHtml(displayDate(fromIsoDate(e.class_date)))} · ${TIMES[Number(e.class_slot)]}</div><small>Canceló el ${escapeHtml(new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(e.created_at)))}</small></div>`).join(''):'<div class="empty">No hay cancelaciones con menos de dos horas de antelación.</div>';
+  }
+  function trainerMemberNames() {
+    const names=new Map();
+    (trainerData?.members||[]).forEach(m=>{if(!names.has(norm(m.member_name)))names.set(norm(m.member_name),m.member_name)});
+    (trainerData?.bookings||[]).forEach(b=>{if(!names.has(norm(b.member_name)))names.set(norm(b.member_name),b.member_name)});
+    (trainerData?.events||[]).forEach(e=>{if(!names.has(norm(e.member_name)))names.set(norm(e.member_name),e.member_name)});
+    return [...names.values()].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
+  }
+  function renderWarnings() {
+    const names=trainerMemberNames();
+    $('warningMembers').innerHTML=`<h3>Selecciona un socio</h3><p class="member-add-copy">Elige un socio para consultar sus reservas de los últimos 7 días.</p>${names.length?'<div class="member-list">'+names.map(name=>`<div class="member-row"><button class="member-choice ${warningName&&norm(warningName)===norm(name)?'active':''}" type="button" data-warning-member="${escapeHtml(name)}"><span>${escapeHtml(name)}</span><span class="member-expand">${warningName&&norm(warningName)===norm(name)?'Seleccionado':'Ver sesiones'}</span></button></div>`).join('')+'</div>':'<div class="empty">No hay socios dados de alta.</div>'}`;
+    renderWarningSessions();
+  }
+  function renderWarningSessions() {
+    const panel=$('warningSessions');
+    if(!warningName){panel.innerHTML='<div class="empty">Selecciona un socio para ver sus sesiones reservadas.</div>';return;}
+    const today=localDay(new Date()), firstDay=new Date(today);firstDay.setDate(firstDay.getDate()-6);
+    const sessions=(trainerData?.bookings||[]).filter(b=>norm(b.member_name)===norm(warningName)).filter(b=>{const day=fromIsoDate(b.class_date);return day>=firstDay&&day<=today;}).sort((a,b)=>`${b.class_date}-${b.class_slot}`.localeCompare(`${a.class_date}-${a.class_slot}`));
+    if(!sessions.length){panel.innerHTML=`<h3>Sesiones de ${escapeHtml(warningName)}</h3><div class="empty">No tiene sesiones reservadas en los últimos 7 días.</div>`;return;}
+    panel.innerHTML=`<h3>Sesiones reservadas por ${escapeHtml(warningName)} · últimos 7 días</h3>`+sessions.map(booking=>{
+      const day=fromIsoDate(booking.class_date),slot=Number(booking.class_slot),ended=classHasEnded(day,slot),warned=currentAbsence(booking);
+      const action=warned?'undo':'mark';
+      const label=warned?'Anular warning':ended?'Registrar warning':'Pendiente de finalizar';
+      return `<div class="rosterperson warning-session"><span>${escapeHtml(displayDate(day))} · ${TIMES[slot]}<small>${warned?'Warning registrado':ended?'Clase finalizada':'Aún no ha terminado la clase'}</small></span><button class="markabsence ${warned?'warning-undo':''}" type="button" data-warning-action="${action}" data-warning-booking="${escapeHtml(booking.id)}" ${!ended&&!warned?'disabled':''}>${label}</button></div>`;
+    }).join('');
   }
   function renderMembers() {
     const names=new Map(); (trainerData?.members||[]).forEach(m=>{if(!names.has(norm(m.member_name)))names.set(norm(m.member_name),m.member_name)}); (trainerData?.bookings||[]).forEach(b=>{if(!names.has(norm(b.member_name)))names.set(norm(b.member_name),b.member_name)}); (trainerData?.events||[]).forEach(e=>{if(!names.has(norm(e.member_name)))names.set(norm(e.member_name),e.member_name)});
@@ -128,20 +153,20 @@
   }
   function renderMemberHistory(name) {
     const events=(trainerData?.events||[]).filter(e=>norm(e.member_name)===norm(name)).sort((a,b)=>a.created_at.localeCompare(b.created_at));
-    const counts={reservation:0,cancellation:0,absence:0}, absenceState={};
+    const counts={reservation:0,cancellation:0,warning:0}, absenceState={};
     events.forEach(e=>{if(e.event_type==='reservation')counts.reservation++;if(e.event_type==='cancellation')counts.cancellation++;if(e.event_type==='absence'||e.event_type==='absence_reversed')absenceState[e.booking_id||`${e.class_date}-${e.class_slot}`]=e.event_type==='absence';});
-    counts.absence=Object.values(absenceState).filter(Boolean).length;
+    counts.warning=Object.values(absenceState).filter(Boolean).length;
     const log=events.map(e=>{
-      const labels={reservation:'Reservó',cancellation:e.late?'Canceló con menos de dos horas de antelación':'Canceló',absence:'Falta marcada por entrenador',absence_reversed:'Falta corregida'};
-      return `<div class="historyevent">${labels[e.event_type]||escapeHtml(e.event_type)}<small>${escapeHtml(displayDate(fromIsoDate(e.class_date)))} · ${TIMES[Number(e.class_slot)]} · Registro: ${escapeHtml(new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(e.created_at)))}</small></div>`;
+      const labels={reservation:'Reservó',cancellation:e.late?'Canceló con menos de dos horas de antelación':'Canceló',absence:'WARNING · No asistió a la clase',absence_reversed:'Warning anulado por entrenador'};
+      return `<div class="historyevent ${e.event_type==='absence'?'warning-event':''}">${labels[e.event_type]||escapeHtml(e.event_type)}<small>${escapeHtml(displayDate(fromIsoDate(e.class_date)))} · ${TIMES[Number(e.class_slot)]} · Registro: ${escapeHtml(new Intl.DateTimeFormat('es-ES',{dateStyle:'short',timeStyle:'short'}).format(new Date(e.created_at)))}</small></div>`;
     }).join('');
     const deleteButtons=trainerData?.is_owner===true?'<div class="history-actions"><button class="markabsence clear-history" type="button" data-clear-member-history>Borrar historial del socio</button><button class="markabsence delete-member" type="button" data-delete-member-history>Borrar socio y su historial</button></div>':'';
-    return `<h3>Historial de ${escapeHtml(name)}</h3>${deleteButtons}<div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Faltas actuales: <strong>${counts.absence}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
+    return `<h3>Historial de ${escapeHtml(name)}</h3>${deleteButtons}<div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Warnings: <strong class="warning-count">${counts.warning}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
   }
   function renderTrainerView() {
     $('showAddMember').hidden=trainerData?.is_owner!==true;
-    $('roster').hidden=trainerView!=='roster'; $('lateList').hidden=trainerView!=='late'; $('historyMembers').hidden=trainerView!=='history'; $('historyView').hidden=true; $('memberAddPanel').hidden=trainerView!=='addMember'||trainerData?.is_owner!==true;
-    if(trainerView==='roster')renderRoster(); if(trainerView==='late')renderLate(); if(trainerView==='history')renderMembers();
+    $('roster').hidden=trainerView!=='roster'; $('lateList').hidden=trainerView!=='late'; $('historyMembers').hidden=trainerView!=='history'; $('historyView').hidden=true; $('memberAddPanel').hidden=trainerView!=='addMember'||trainerData?.is_owner!==true; $('warningMembers').hidden=trainerView!=='warnings'; $('warningSessions').hidden=trainerView!=='warnings';
+    if(trainerView==='roster')renderRoster(); if(trainerView==='late')renderLate(); if(trainerView==='history')renderMembers(); if(trainerView==='warnings')renderWarnings();
   }
   async function changeTrainerView(name) {
     if(!trainerKey)return; trainerView=name;
@@ -159,7 +184,7 @@
     const bookedDate=new Date(selected.getFullYear(),selected.getMonth(),selected.getDate()), bookedSlot=selectedSlot;
     const name=$('memberName').value.trim().replace(/\s+/g,' '); $('reserve').disabled=true;
     const {error}=await db.rpc('reserve_class',{p_class_date:dateKey(selected),p_slot:selectedSlot,p_member_name:name});
-    if(error){if(String(error.message||'').includes('SOCIO_NO_ENCONTRADO'))showMemberNotFound(name);else showDbError(error);await loadCounts();return;}
+    if(error){const message=String(error.message||'');if(message.includes('SOCIO_NO_ENCONTRADO'))showMemberNotFound(name);else if(message.includes('SOCIO_BLOQUEADO'))notify(message.replace('SOCIO_BLOQUEADO:','').trim());else showDbError(error);await loadCounts();return;}
     $('memberName').value='';selectedSlot=null;await loadCounts();render();openBookingConfirmation(bookedDate,bookedSlot);
   };
   async function loadMyBookings() {
@@ -181,7 +206,7 @@
     button.disabled=true;
     const item=button.closest('.my-booking');
     const {data,error}=await db.rpc('cancel_class',{p_class_date:item.dataset.date,p_slot:Number(item.dataset.slot),p_member_name:name});
-    if(error){showDbError(error);button.disabled=false;return;}
+    if(error){if(String(error.message||'').includes('CANCELACION_MENOS_DE_1HORA'))notify('No puedes cancelar la reserva porque falta menos de una hora para la clase.');else showDbError(error);button.disabled=false;return;}
     notify(data?.late?'Cancelación registrada. Se avisará a los entrenadores.':'Reserva cancelada.');
     await loadMyBookings(); await loadCounts(); render();
   };
@@ -202,6 +227,7 @@
   $('showRoster').onclick=()=>changeTrainerView('roster');
   $('showLate').onclick=()=>changeTrainerView('late');
   $('showHistory').onclick=()=>changeTrainerView('history');
+  $('showWarnings').onclick=()=>changeTrainerView('warnings');
   $('showAddMember').onclick=()=>changeTrainerView('addMember');
   $('addMemberButton').onclick=async()=>{
     if(trainerData?.is_owner!==true){notify('Solo Fernando puede dar de alta socios.');return;}
@@ -244,6 +270,17 @@
     }
     const member=e.target.closest('[data-member]');if(!member)return;
     historyName=norm(historyName)===norm(member.dataset.member)?'':member.dataset.member;renderMembers();
+  };
+  $('warningMembers').onclick=e=>{const button=e.target.closest('[data-warning-member]');if(!button)return;warningName=button.dataset.warningMember;renderWarnings();};
+  $('warningSessions').onclick=async e=>{
+    const button=e.target.closest('[data-warning-action]');if(!button)return;
+    const absent=button.dataset.warningAction==='mark';
+    if(absent&&!window.confirm(`¿Confirmas que ${warningName} no asistió a esta clase reservada? Se registrará un warning en su historial.`))return;
+    if(!absent&&!window.confirm(`¿Quieres anular este warning de ${warningName}?`))return;
+    button.disabled=true;
+    const {error}=await db.rpc('set_absence',{p_key:trainerKey,p_booking_id:button.dataset.warningBooking,p_absent:absent});
+    if(error){showDbError(error);button.disabled=false;return;}
+    await fetchTrainerData();renderTrainerView();notify(absent?'Warning registrado en el historial del socio.':'Warning anulado.');
   };
   $('roster').onclick=async e=>{
     const button=e.target.closest('[data-action]');if(!button)return;const bookingId=button.closest('[data-booking]').dataset.booking,action=button.dataset.action;
