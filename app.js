@@ -41,6 +41,11 @@
     const madridNow=`${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}:${part('second')}`;
     return `${dateKey(date)}T${END_TIMES[slot]}:00`<madridNow;
   }
+  function madridTodayKey() {
+    const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+    const part=type=>parts.find(item=>item.type===type)?.value||'00';
+    return `${part('year')}-${part('month')}-${part('day')}`;
+  }
   function displayDate(date, options={weekday:'long',day:'numeric',month:'long'}) { const value=new Intl.DateTimeFormat('es-ES',options).format(date); return value.charAt(0).toUpperCase()+value.slice(1); }
   function fromIsoDate(value) { return new Date(`${value}T12:00:00`); }
   async function loadCounts() {
@@ -153,8 +158,8 @@
   function renderWarningSessions() {
     const panel=$('warningSessions');
     if(!warningName){panel.innerHTML='<div class="empty">Selecciona un socio para ver sus sesiones reservadas.</div>';return;}
-    const today=localDay(new Date()), firstDay=new Date(today);firstDay.setDate(firstDay.getDate()-6);
-    const sessions=(trainerData?.bookings||[]).filter(b=>norm(b.member_name)===norm(warningName)).filter(b=>{const day=fromIsoDate(b.class_date);return day>=firstDay&&day<=today;}).sort((a,b)=>`${b.class_date}-${b.class_slot}`.localeCompare(`${a.class_date}-${a.class_slot}`));
+    const todayKey=madridTodayKey(),firstDate=new Date(`${todayKey}T12:00:00Z`);firstDate.setUTCDate(firstDate.getUTCDate()-6);const firstDateKey=firstDate.toISOString().slice(0,10);
+    const sessions=(trainerData?.bookings||[]).filter(b=>norm(b.member_name)===norm(warningName)).filter(b=>b.class_date>=firstDateKey&&b.class_date<=todayKey).sort((a,b)=>`${b.class_date}-${b.class_slot}`.localeCompare(`${a.class_date}-${a.class_slot}`));
     if(!sessions.length){panel.innerHTML=`<h3>Sesiones de ${escapeHtml(warningName)}</h3><div class="empty">No tiene sesiones reservadas en los últimos 7 días.</div>`;return;}
     panel.innerHTML=`<h3>Sesiones reservadas por ${escapeHtml(warningName)} · últimos 7 días</h3>`+sessions.map(booking=>{
       const day=fromIsoDate(booking.class_date),slot=Number(booking.class_slot),ended=classHasEnded(day,slot),warned=currentAbsence(booking);
