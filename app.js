@@ -138,6 +138,14 @@
     const pending=bookings.filter(b=>!classHasEnded(fromIsoDate(b.class_date),Number(b.class_slot)));
     renderBookingList('roster',pending,'No hay reservas pendientes.',true);
   }
+  function renderOwnerRoster(viewName) {
+    const todayKey=madridTodayKey();
+    const bookings=[...(trainerData?.bookings||[])].sort((a,b)=>`${a.class_date}-${a.class_slot}`.localeCompare(`${b.class_date}-${b.class_slot}`));
+    const visible=viewName==='today'
+      ?bookings.filter(b=>b.class_date===todayKey)
+      :bookings.filter(b=>b.class_date>=todayKey&&!classHasEnded(fromIsoDate(b.class_date),Number(b.class_slot)));
+    renderBookingList('roster',visible,viewName==='today'?'No hay reservas para hoy.':'No hay reservas futuras.',true);
+  }
   function renderPastRoster() {
     const bookings=[...(trainerData?.bookings||[])].sort((a,b)=>`${b.class_date}-${b.class_slot}`.localeCompare(`${a.class_date}-${a.class_slot}`));
     const past=bookings.filter(b=>classHasEnded(fromIsoDate(b.class_date),Number(b.class_slot)));
@@ -198,9 +206,17 @@
     if(!members.length)$('trainerBookingPanel').insertAdjacentHTML('beforeend','<div class="empty">No hay socios dados de alta.</div>');
   }
   function renderTrainerView() {
-    $('showAddMember').hidden=trainerData?.is_owner!==true; $('showSchedule').hidden=trainerData?.is_owner!==true;
-    $('roster').hidden=trainerView!=='roster'; $('pastRoster').hidden=trainerView!=='pastRoster'; $('historyMembers').hidden=trainerView!=='history'; $('historyView').hidden=true; $('memberAddPanel').hidden=trainerView!=='addMember'||trainerData?.is_owner!==true; $('trainerBookingPanel').hidden=trainerView!=='addBooking'; $('schedulePanel').hidden=trainerView!=='schedule'||trainerData?.is_owner!==true; $('warningMembers').hidden=trainerView!=='warnings'; $('warningSessions').hidden=trainerView!=='warnings';
-    if(trainerView==='roster')renderRoster(); if(trainerView==='pastRoster')renderPastRoster(); if(trainerView==='history')renderMembers(); if(trainerView==='warnings')renderWarnings(); if(trainerView==='addBooking')renderAddBooking();
+    const isOwner=trainerData?.is_owner===true;
+    $('ownerTrainerNav').hidden=!isOwner; $('regularTrainerNav').hidden=isOwner;
+    document.querySelectorAll('#ownerTrainerNav [data-trainer-view],#regularTrainerNav [data-trainer-view]').forEach(button=>{
+      const active=button.dataset.trainerView===trainerView;
+      button.classList.toggle('active-trainer-tab',active);
+      if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+    });
+    $('showAddMemberOwner').classList.toggle('active-trainer-tab',trainerView==='addMember');
+    $('showScheduleOwner').classList.toggle('active-trainer-tab',trainerView==='schedule');
+    $('roster').hidden=!['roster','today','future'].includes(trainerView); $('pastRoster').hidden=trainerView!=='pastRoster'; $('historyMembers').hidden=trainerView!=='history'; $('historyView').hidden=true; $('memberAddPanel').hidden=trainerView!=='addMember'||!isOwner; $('trainerBookingPanel').hidden=trainerView!=='addBooking'; $('schedulePanel').hidden=trainerView!=='schedule'||!isOwner; $('warningMembers').hidden=trainerView!=='warnings'; $('warningSessions').hidden=trainerView!=='warnings';
+    if(trainerView==='roster')renderRoster(); if(trainerView==='today'||trainerView==='future')renderOwnerRoster(trainerView); if(trainerView==='pastRoster')renderPastRoster(); if(trainerView==='history')renderMembers(); if(trainerView==='warnings')renderWarnings(); if(trainerView==='addBooking')renderAddBooking();
   }
   async function changeTrainerView(name) {
     if(!trainerKey)return; trainerView=name;
@@ -256,19 +272,17 @@
     if(!ready){notify('Primero hay que configurar la base de datos compartida.');return;}
     const input=$('trainerName').value.trim();if(!validName(input)){notify('Escribe tu nombre y tus dos apellidos.');return;}
     const {data,error}=await db.rpc('trainer_data',{p_key:input});if(error){console.error('No se pudo validar el entrenador:',error);notify(error.message||'No se pudo validar el acceso.');return;}
-    trainerKey=input;trainerData=data;trainerView='roster';setTrainerPanel(true);renderTrainerView();
+    trainerKey=input;trainerData=data;trainerView='today';setTrainerPanel(true);renderTrainerView();
   };
-  $('showRoster').onclick=()=>changeTrainerView('roster');
-  $('showPastRoster').onclick=()=>changeTrainerView('pastRoster');
-  $('showHistory').onclick=()=>changeTrainerView('history');
-  $('showWarnings').onclick=()=>changeTrainerView('warnings');
-  $('showAddMember').onclick=()=>changeTrainerView('addMember');
-$('showAddBooking').onclick=()=>changeTrainerView('addBooking');
-  $('showSchedule').onclick=async()=>{
+  $('ownerTrainerNav').onclick=e=>{const button=e.target.closest('[data-trainer-view]');if(button)changeTrainerView(button.dataset.trainerView);};
+  $('regularTrainerNav').onclick=e=>{const button=e.target.closest('[data-trainer-view]');if(button)changeTrainerView(button.dataset.trainerView);};
+  $('showAddMemberOwner').onclick=()=>changeTrainerView('addMember');
+  const openSchedule=async()=>{
     if(trainerData?.is_owner!==true){notify('Solo Fernando puede gestionar los horarios.');return;}
     if(!$('scheduleDate').value)$('scheduleDate').value=dateKey(new Date());
     await changeTrainerView('schedule');await loadScheduleForDate();
   };
+  $('showScheduleOwner').onclick=openSchedule;
   $('scheduleDate').onchange=loadScheduleForDate;
   async function loadScheduleForDate(){
     const date=$('scheduleDate').value;if(!date)return;
