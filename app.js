@@ -159,8 +159,8 @@
     panel.innerHTML=`<h3>Sesiones reservadas por ${escapeHtml(warningName)} · últimos 7 días</h3>`+sessions.map(booking=>{
       const day=fromIsoDate(booking.class_date),slot=Number(booking.class_slot),ended=classHasEnded(day,slot),warned=currentAbsence(booking);
       const action=warned?'undo':'mark';
-      const label=warned?'Anular warning':ended?'Registrar warning':'Pendiente de finalizar';
-      return `<div class="rosterperson warning-session"><span>${escapeHtml(displayDate(day))} · ${TIMES[slot]}<small>${warned?'Warning registrado':ended?'Clase finalizada':'Aún no ha terminado la clase'}</small></span><button class="markabsence ${warned?'warning-undo':''}" type="button" data-warning-action="${action}" data-warning-booking="${escapeHtml(booking.id)}" ${!ended&&!warned?'disabled':''}>${label}</button></div>`;
+      const label=warned?'Anular warning':'Registrar warning';
+      return `<div class="rosterperson warning-session"><span>${escapeHtml(displayDate(day))} · ${TIMES[slot]}<small>${warned?'Warning registrado':ended?'Clase finalizada':'La hora de finalización se comprobará al registrar'}</small></span><button class="markabsence ${warned?'warning-undo':''}" type="button" data-warning-action="${action}" data-warning-booking="${escapeHtml(booking.id)}">${label}</button></div>`;
     }).join('');
   }
   function renderMembers() {
