@@ -128,7 +128,7 @@
       if(group!==last){html+=`<div class="rosterclass">${escapeHtml(displayDate(d))} · ${TIMES[slot]}</div>`;last=group;}
       const ended=classHasEnded(d,slot), absent=currentAbsence(booking);
       const control=absent?'<button class="markabsence" data-action="undo" type="button">Anular warning</button>':ended?'<span class="status">Clase finalizada</span>':'<span class="status">Pendiente</span>';
-      const adminCancel=canManageBookings?'<button class="markabsence" data-action="cancel-booking" type="button">Cancelar reserva</button>':'';
+      const adminCancel=canManageBookings?'<button class="markabsence cancel-booking-button" data-action="cancel-booking" type="button">Cancelar reserva</button>':'';
       html+=`<div class="rosterperson" data-booking="${escapeHtml(booking.id)}"><span>${escapeHtml(booking.member_name)}<small>${ended?'Clase finalizada':'Clase pendiente'}</small></span>${absent?'<span class="status absent">Warning registrado</span>':''}<span style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${adminCancel}${control}</span></div>`;
     });
     $(container).innerHTML=html;
@@ -173,7 +173,7 @@
       const day=fromIsoDate(booking.class_date),slot=Number(booking.class_slot),ended=classHasEnded(day,slot),warned=currentAbsence(booking);
       const action=warned?'undo':'mark';
       const label=warned?'Anular warning':'Registrar warning';
-      return `<div class="rosterperson warning-session"><span>${escapeHtml(displayDate(day))} · ${TIMES[slot]}<small>${warned?'Warning registrado':ended?'Clase finalizada':'La hora de finalización se comprobará al registrar'}</small></span><button class="markabsence ${warned?'warning-undo':''}" type="button" data-warning-action="${action}" data-warning-booking="${escapeHtml(booking.id)}">${label}</button></div>`;
+      return `<div class="rosterperson warning-session"><span>${escapeHtml(displayDate(day))} · ${TIMES[slot]}<small>${warned?'Warning registrado':ended?'Clase finalizada':'La hora de finalización se comprobará al registrar'}</small></span><button class="markabsence ${warned?'warning-undo':'warning-register-button'}" type="button" data-warning-action="${action}" data-warning-booking="${escapeHtml(booking.id)}">${label}</button></div>`;
     }).join('');
   }
   function renderMembers() {
