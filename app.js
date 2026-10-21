@@ -6,7 +6,8 @@
   const ready = Boolean(window.supabase?.createClient && config.supabaseUrl && config.supabasePublishableKey && !config.supabaseUrl.includes('PEGA_AQUI') && !config.supabasePublishableKey.includes('PEGA_AQUI'));
   const db = ready ? window.supabase.createClient(config.supabaseUrl, config.supabasePublishableKey) : null;
   let view = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-  let selected = null, selectedSlot = null, counts = {}, availability = {}, trainerKey = '', trainerData = null, trainerView = 'roster', historyName = '', warningName = '';
+  let selected = null, selectedSlot = null, counts = {}, availability = {}, trainerKey = '', trainerData = null, trainerView = '', historyName = '', warningName = '';
+  let trainerCalendarMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1),trainerCalendarDate='',trainerCalendarSlot=null,trainerCalendarAvailability={};
   const $ = id => document.getElementById(id);
   const pad = n => String(n).padStart(2, '0');
   const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -35,12 +36,18 @@
   function localDay(date) { return new Date(date.getFullYear(),date.getMonth(),date.getDate()); }
   function isBookable(date) { const today=localDay(new Date()), limit=new Date(today); limit.setDate(limit.getDate()+7); const day=localDay(date); return day>=today && day<=limit; }
   function classStart(date,slot) { const [h,m]=TIMES[slot].slice(0,5).split(':').map(Number); return new Date(date.getFullYear(),date.getMonth(),date.getDate(),h,m); }
-  function classHasEnded(date,slot) {
+  function classBookingClosed(date,slot) {
+    const cutoff=new Date(`${dateKey(date)}T${TIMES[slot].slice(0,5)}:00Z`);
+    cutoff.setUTCMinutes(cutoff.getUTCMinutes()-1);
+    return cutoff.toISOString().slice(0,19)<=madridDateTimeKey();
+  }
+  function madridDateTimeKey() {
     const nowParts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date());
     const part=type=>nowParts.find(item=>item.type===type)?.value||'00';
-    const madridNow=`${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}:${part('second')}`;
-    return `${dateKey(date)}T${END_TIMES[slot]}:00`<madridNow;
+    return `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}:${part('second')}`;
   }
+  function classHasEnded(date,slot) { return `${dateKey(date)}T${END_TIMES[slot]}:00`<madridDateTimeKey(); }
+  function classHasStarted(date,slot) { return `${dateKey(date)}T${TIMES[slot].slice(0,5)}:00`<=madridDateTimeKey(); }
   function madridTodayKey() {
     const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
     const part=type=>parts.find(item=>item.type===type)?.value||'00';
@@ -66,8 +73,8 @@
       const date=new Date(year,month,d), weekend=[0,6].includes(date.getDay()), past=localDay(date)<localDay(new Date()), closed=!isBookable(date), today=dateKey(date)===dateKey(new Date()), active=selected&&dateKey(date)===dateKey(selected);
       let remainingClasses=0;
       if(!closed) TIMES.forEach((_,slot)=>{
-        const hasStarted=classStart(date,slot)<=new Date(), remaining=counts[classKey(dateKey(date),slot)]??MAX_CAPACITY, open=availability[classKey(dateKey(date),slot)]??!weekend;
-        if(open&&!hasStarted&&remaining>0)remainingClasses++;
+        const bookingClosed=classBookingClosed(date,slot), remaining=counts[classKey(dateKey(date),slot)]??MAX_CAPACITY, open=availability[classKey(dateKey(date),slot)]??!weekend;
+        if(open&&!bookingClosed&&remaining>0)remainingClasses++;
       });
       const hasAvailability=!closed&&remainingClasses>0;
       const availabilityLabel=closed?'':`<span class="day-status ${hasAvailability?'available':'unavailable'}">${hasAvailability?'Clases disponibles':'No hay clases disponibles'}</span>`;
@@ -83,15 +90,15 @@
     const openSlots=TIMES.map((time,slot)=>({time,slot})).filter(({slot})=>availability[classKey(dateKey(selected),slot)]??(selected.getDay()>=1&&selected.getDay()<=5));
     if(!openSlots.length){$('classlist').innerHTML='<div class="empty">No hay clases abiertas este día.</div>';return;}
     $('classlist').innerHTML=openSlots.map(({time,slot})=>{
-      const remaining=counts[classKey(dateKey(selected),slot)]??MAX_CAPACITY, past=classStart(selected,slot)<=new Date();
+      const remaining=counts[classKey(dateKey(selected),slot)]??MAX_CAPACITY, bookingClosed=classBookingClosed(selected,slot);
       const full=remaining<=0, low=remaining>0&&remaining<=2;
-      return `<button class="slot ${selectedSlot===slot?'selected':''} ${past?'disabled':''} ${full?'full':''} ${low?'low':''}" data-slot="${slot}" ${past||full?'disabled':''}><span class="slotleft"><i class="timeicon">◷</i><span><strong>${time}</strong><small>${full?'Clase completa':'Entrenamiento en grupo'}</small></span></span><span class="occupancy"><b>${remaining}</b>${remaining===1?'plaza restante':'plazas restantes'}</span></button>`;
+      return `<button class="slot ${selectedSlot===slot?'selected':''} ${bookingClosed?'disabled':''} ${full?'full':''} ${low?'low':''}" data-slot="${slot}" ${bookingClosed||full?'disabled':''}><span class="slotleft"><i class="timeicon">◷</i><span><strong>${time}</strong><small>${full?'Clase completa':bookingClosed?'Reserva cerrada':'Entrenamiento en grupo'}</small></span></span><span class="occupancy"><b>${remaining}</b>${remaining===1?'plaza restante':'plazas restantes'}</span></button>`;
     }).join('');
     $('classlist').querySelectorAll('[data-slot]').forEach(button=>button.onclick=()=>{selectedSlot=Number(button.dataset.slot);renderClasses();syncReserveButton();});
   }
   function syncReserveButton() {
     const name=$('memberName').value.trim().replace(/\s+/g,' '), parts=name?name.split(' '):[];
-    const full=Boolean(selected&&selectedSlot!==null&&(counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0);
+    const full=Boolean(selected&&selectedSlot!==null&&(counts[classKey(dateKey(selected),selectedSlot)]??MAX_CAPACITY)<=0),bookingClosed=Boolean(selected&&selectedSlot!==null&&classBookingClosed(selected,selectedSlot));
     const reasons=[];
     if(!ready) reasons.push('Las reservas no están disponibles ahora mismo.');
     else {
@@ -100,9 +107,10 @@
       else if(parts.length===2) reasons.push('Te falta el segundo apellido.');
       if(!selected||selectedSlot===null) reasons.push('Selecciona una clase.');
       if(full) reasons.push('Esta clase está completa; elige otra.');
+      if(bookingClosed) reasons.push('Las reservas se cierran un minuto antes del inicio de la clase.');
     }
     const help=$('bookingHelp'); help.textContent=reasons.join(' '); help.hidden=reasons.length===0;
-    $('reserve').disabled=!ready||selectedSlot===null||!selected||parts.length<3||full;
+    $('reserve').disabled=!ready||selectedSlot===null||!selected||parts.length<3||full||bookingClosed;
   }
   function render() { renderCalendar(); renderClasses(); syncReserveButton(); }
   function openBookingConfirmation(date,slot) {
@@ -151,6 +159,73 @@
     const past=bookings.filter(b=>classHasEnded(fromIsoDate(b.class_date),Number(b.class_slot)));
     renderBookingList('pastRoster',past,'Todavía no hay reservas pasadas.',false);
   }
+  async function loadTrainerCalendarAvailability() {
+    if(!ready)return;
+    const start=new Date(trainerCalendarMonth.getFullYear(),trainerCalendarMonth.getMonth(),1),end=new Date(trainerCalendarMonth.getFullYear(),trainerCalendarMonth.getMonth()+1,0);
+    const {data,error}=await db.rpc('get_class_counts',{p_start_date:dateKey(start),p_end_date:dateKey(end)});
+    if(error){showDbError(error);trainerCalendarAvailability={};return;}
+    trainerCalendarAvailability={};
+    (data||[]).forEach(row=>{if(!row.is_open)return;const key=String(row.class_date);(trainerCalendarAvailability[key]||=[]).push(Number(row.class_slot));});
+  }
+  function renderTrainerCalendar() {
+    const year=trainerCalendarMonth.getFullYear(),month=trainerCalendarMonth.getMonth();
+    const title=new Intl.DateTimeFormat('es-ES',{month:'long',year:'numeric'}).format(trainerCalendarMonth);
+    $('trainerCalendarMonth').textContent=title.charAt(0).toUpperCase()+title.slice(1);
+    const offset=(new Date(year,month,1).getDay()+6)%7,total=new Date(year,month+1,0).getDate(),todayKey=madridTodayKey();
+    let html='';
+    for(let i=0;i<offset;i++)html+='<div class="trainer-calendar-day empty-day" aria-hidden="true"></div>';
+    for(let day=1;day<=total;day++){
+      const key=dateKey(new Date(year,month,day));
+      const count=(trainerData?.bookings||[]).filter(b=>b.class_date===key).length;
+      const openSlots=trainerCalendarAvailability[key]||[];
+      const status=count?'has-reservations':openSlots.length?'no-reservations':'no-classes';
+      const cls=['trainer-calendar-day',key===trainerCalendarDate?'selected':'',key===todayKey?'today':''].filter(Boolean).join(' ');
+      const countLabel=count?`${count} ${count===1?'reserva':'reservas'}`:openSlots.length?'Sin reservas':'Sin clases';
+      html+=`<button type="button" class="${cls}" data-calendar-day="${key}"><span class="trainer-calendar-number">${day}</span><span class="trainer-calendar-count ${status}">${countLabel}</span></button>`;
+    }
+    $('trainerCalendarDays').innerHTML=html;
+    renderTrainerCalendarDetails();
+  }
+  function renderTrainerCalendarDetails() {
+    const details=$('trainerCalendarDetails');
+    if(!trainerCalendarDate){details.innerHTML='<div class="empty">Selecciona un día para ver sus clases.</div>';return;}
+    const day=fromIsoDate(trainerCalendarDate);
+    const openSlots=[...new Set([...(trainerCalendarAvailability[trainerCalendarDate]||[]),...(trainerData?.bookings||[]).filter(b=>b.class_date===trainerCalendarDate).map(b=>Number(b.class_slot))])];
+    const heading=`<h3>${escapeHtml(displayDate(day,{weekday:'long',day:'numeric',month:'long',year:'numeric'}))}</h3>`;
+    if(!openSlots.length){details.innerHTML=`${heading}<div class="empty">No hay clases programadas este día.</div>`;return;}
+    const items=openSlots.sort((a,b)=>a-b).map(slot=>{
+      const count=(trainerData?.bookings||[]).filter(b=>b.class_date===trainerCalendarDate&&Number(b.class_slot)===slot).length;
+      const cls=`trainer-calendar-slot ${trainerCalendarSlot===slot?'selected':''}`;
+      return `<button type="button" class="${cls}" data-calendar-slot="${slot}"><strong>${TIMES[slot]}</strong><small>${count} ${count===1?'persona apuntada':'personas apuntadas'}</small></button>`;
+    }).join('');
+    let selectedClass='';
+    if(trainerCalendarSlot!==null){
+      const bookings=(trainerData?.bookings||[]).filter(b=>b.class_date===trainerCalendarDate&&Number(b.class_slot)===trainerCalendarSlot).sort((a,b)=>a.member_name.localeCompare(b.member_name,'es',{sensitivity:'base'}));
+      const ended=classHasEnded(day,trainerCalendarSlot),started=classHasStarted(day,trainerCalendarSlot);
+      const people=bookings.length?`<div class="trainer-class-names">${bookings.map(booking=>{
+        const warned=currentAbsence(booking),warningAction=warned?'undo':'mark';
+        const warningLabel=warned?'Anular warning':ended?'Registrar warning':'Warning al finalizar';
+        const warningDisabled=!warned&&!ended?'disabled':'';
+        const cancelAction=trainerData?.is_owner===true&&!started?`<button type="button" class="trainer-calendar-action calendar-cancel-button" data-calendar-cancel="${escapeHtml(booking.id)}">Cancelar reserva</button>`:'';
+        return `<div class="trainer-calendar-person"><span class="trainer-calendar-person-name">${escapeHtml(booking.member_name)}${warned?'<small class="calendar-warning-marked">Warning registrado</small>':''}</span><span class="trainer-calendar-actions"><button type="button" class="trainer-calendar-action calendar-warning-button" data-calendar-warning="${escapeHtml(booking.id)}" data-warning-action="${warningAction}" ${warningDisabled}>${warningLabel}</button>${cancelAction}</span></div>`;
+      }).join('')}</div>`:'<div class="empty">No hay personas reservadas en esta clase.</div>';
+      const activeMembers=[...(trainerData?.members||[])].filter(member=>member.is_active!==false).sort((a,b)=>a.member_name.localeCompare(b.member_name,'es',{sensitivity:'base'}));
+      const canAdd=Boolean((trainerCalendarAvailability[trainerCalendarDate]||[]).includes(trainerCalendarSlot));
+      const addBooking=canAdd?`<div class="trainer-calendar-add"><label class="fieldlabel" for="trainerCalendarMember">Añadir reserva para un socio activo</label><div class="trainer-calendar-add-row"><select class="textinput" id="trainerCalendarMember" ${activeMembers.length?'':'disabled'}><option value="">Selecciona un socio</option>${activeMembers.map(member=>`<option value="${escapeHtml(member.member_name)}">${escapeHtml(member.member_name)}</option>`).join('')}</select><button type="button" class="primary calendar-add-button" data-calendar-add-booking ${activeMembers.length?'':'disabled'}>Añadir reserva</button></div>${activeMembers.length?'':'<small class="trainer-calendar-add-note">No hay socios activos en el registro.</small>'}</div>`:'';
+      selectedClass=`${people}${addBooking}`;
+    }
+    details.innerHTML=`${heading}<div class="trainer-calendar-slots">${items}</div>${selectedClass}`;
+  }
+  async function openTrainerCalendar() {
+    if(!trainerKey)return;
+    try{await fetchTrainerData();}catch(error){showDbError(error);}
+    const todayKey=madridTodayKey();
+    trainerCalendarMonth=fromIsoDate(todayKey);trainerCalendarMonth.setDate(1);
+    trainerCalendarDate=todayKey;trainerCalendarSlot=null;
+    await loadTrainerCalendarAvailability();
+    renderTrainerCalendar();$('trainerCalendarModal').hidden=false;document.body.classList.add('trainer-calendar-open');$('closeTrainerCalendar').focus();
+  }
+  function closeTrainerCalendar() {$('trainerCalendarModal').hidden=true;document.body.classList.remove('trainer-calendar-open');}
   function trainerMemberNames() {
     const names=new Map();
     (trainerData?.members||[]).forEach(m=>{if(!names.has(norm(m.member_name)))names.set(norm(m.member_name),m.member_name)});
@@ -177,10 +252,12 @@
     }).join('');
   }
   function renderMembers() {
-    const names=new Map(); (trainerData?.members||[]).forEach(m=>{if(!names.has(norm(m.member_name)))names.set(norm(m.member_name),m.member_name)}); (trainerData?.bookings||[]).forEach(b=>{if(!names.has(norm(b.member_name)))names.set(norm(b.member_name),b.member_name)}); (trainerData?.events||[]).forEach(e=>{if(!names.has(norm(e.member_name)))names.set(norm(e.member_name),e.member_name)});
-    const list=[...names.values()].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
+    const members=new Map(); (trainerData?.members||[]).forEach(m=>members.set(norm(m.member_name),{name:m.member_name,active:m.is_active!==false,registered:true}));
+    (trainerData?.bookings||[]).forEach(b=>{if(!members.has(norm(b.member_name)))members.set(norm(b.member_name),{name:b.member_name,active:true,registered:false});});
+    (trainerData?.events||[]).forEach(e=>{if(!members.has(norm(e.member_name)))members.set(norm(e.member_name),{name:e.member_name,active:true,registered:false});});
+    const list=[...members.values()].sort((a,b)=>Number(b.active)-Number(a.active)||a.name.localeCompare(b.name,'es',{sensitivity:'base'}));
     const owner=trainerData?.is_owner===true;
-    $('historyMembers').innerHTML=`<h3>Socios</h3>${owner?'<button class="markabsence clear-history clear-history-all" type="button" data-clear-all-history>Borrar todos los historiales</button>':''}${list.length?'<div class="member-list">'+list.map(name=>{const active=historyName&&norm(historyName)===norm(name);return `<div class="member-row"><button class="member-choice ${active?'active':''}" type="button" data-member="${escapeHtml(name)}"><span>${escapeHtml(name)}</span><span class="member-expand">${active?'Cerrar historial':'Ver historial'}</span></button>${active?`<div class="member-history-inline">${renderMemberHistory(name)}</div>`:''}</div>`}).join('')+'</div>':'<div class="empty">Todavía no hay socios en el historial.</div>'}`;
+    $('historyMembers').innerHTML=`<h3>Socios</h3>${owner?'<button class="markabsence clear-history clear-history-all" type="button" data-clear-all-history>Borrar todos los historiales</button>':''}${list.length?'<div class="member-list">'+list.map(member=>{const name=member.name,expanded=historyName&&norm(historyName)===norm(name);const statusControl=owner&&member.registered?`<button class="member-status-action ${member.active?'is-active':'is-inactive'}" type="button" data-toggle-member-active="${escapeHtml(name)}" data-next-active="${!member.active}">${member.active?'Desactivar':'Activar'}</button>`:`<span class="member-status-label ${member.active?'is-active':'is-inactive'}">${member.active?'Activo':'Inactivo'}</span>`;return `<div class="member-row"><div class="member-profile-row"><button class="member-choice ${expanded?'active':''}" type="button" data-member="${escapeHtml(name)}"><span>${escapeHtml(name)}</span><span class="member-expand">${expanded?'Cerrar historial':'Ver historial'}</span></button>${statusControl}</div>${expanded?`<div class="member-history-inline">${renderMemberHistory(name)}</div>`:''}</div>`}).join('')+'</div>':'<div class="empty">Todavía no hay socios en el historial.</div>'}`;
     $('historyView').innerHTML='';
   }
   function renderMemberHistory(name) {
@@ -200,7 +277,7 @@
     return `<h3>Historial de ${escapeHtml(name)}</h3>${deleteButtons}<div class="historysummary">Reservas: <strong>${counts.reservation}</strong> · Cancelaciones: <strong>${counts.cancellation}</strong> · Warnings actuales: <strong class="warning-count">${counts.warning}</strong></div>${log||'<div class="empty">No hay movimientos registrados para este socio.</div>'}`;
   }
   function renderAddBooking() {
-    const members=[...(trainerData?.members||[])].map(m=>m.member_name).sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
+    const members=[...(trainerData?.members||[])].filter(m=>m.is_active!==false).map(m=>m.member_name).sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
     $('trainerBookingPanel').querySelector('.empty')?.remove();
     $('trainerBookingMember').innerHTML='<option value="">Selecciona un socio</option>'+members.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
     if(!members.length)$('trainerBookingPanel').insertAdjacentHTML('beforeend','<div class="empty">No hay socios dados de alta.</div>');
@@ -234,7 +311,7 @@
     const bookedDate=new Date(selected.getFullYear(),selected.getMonth(),selected.getDate()), bookedSlot=selectedSlot;
     const name=$('memberName').value.trim().replace(/\s+/g,' '); $('reserve').disabled=true;
     const {error}=await db.rpc('reserve_class',{p_class_date:dateKey(selected),p_slot:selectedSlot,p_member_name:name});
-    if(error){const message=String(error.message||'');if(message.includes('SOCIO_NO_ENCONTRADO'))showMemberNotFound(name);else if(message.includes('SOCIO_BLOQUEADO'))notify(message.replace('SOCIO_BLOQUEADO:','').trim());else showDbError(error);await loadCounts();return;}
+    if(error){const message=String(error.message||'');if(message.includes('SOCIO_NO_ENCONTRADO'))showMemberNotFound(name);else if(message.includes('SOCIO_BLOQUEADO'))notify(message.replace('SOCIO_BLOQUEADO:','').trim());else if(message.includes('SOCIO_INACTIVO'))notify(message.replace('SOCIO_INACTIVO:','').trim());else if(message.includes('RESERVA_CERRADA'))notify(message.replace('RESERVA_CERRADA:','').trim());else showDbError(error);await loadCounts();return;}
     selectedSlot=null;await loadCounts();render();openBookingConfirmation(bookedDate,bookedSlot);
   };
   async function loadMyBookings() {
@@ -265,17 +342,58 @@
   $('bookingConfirmation').onclick=e=>{if(e.target===$('bookingConfirmation'))closeBookingConfirmation();};
   $('noticeClose').onclick=closeNotice;
   $('notice').onclick=e=>{if(e.target===$('notice'))closeNotice();};
-  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeBookingConfirmation();closeNotice();}});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeBookingConfirmation();closeNotice();closeTrainerCalendar();}});
   $('closeModal').onclick=()=>{$('trainerModal').classList.remove('show');setTrainerPanel(false);};
   $('trainerModal').onclick=e=>{if(e.target===$('trainerModal')){$('trainerModal').classList.remove('show');setTrainerPanel(false);}};
   window.gymTrainerLogin=async()=>{
     if(!ready){notify('Primero hay que configurar la base de datos compartida.');return;}
     const input=$('trainerName').value.trim();if(!validName(input)){notify('Escribe tu nombre y tus dos apellidos.');return;}
     const {data,error}=await db.rpc('trainer_data',{p_key:input});if(error){console.error('No se pudo validar el entrenador:',error);notify(error.message||'No se pudo validar el acceso.');return;}
-    trainerKey=input;trainerData=data;trainerView='today';setTrainerPanel(true);renderTrainerView();
+    trainerKey=input;trainerData=data;trainerView='';setTrainerPanel(true);renderTrainerView();
   };
-  $('ownerTrainerNav').onclick=e=>{const button=e.target.closest('[data-trainer-view]');if(button)changeTrainerView(button.dataset.trainerView);};
-  $('regularTrainerNav').onclick=e=>{const button=e.target.closest('[data-trainer-view]');if(button)changeTrainerView(button.dataset.trainerView);};
+  const handleTrainerNavClick=e=>{
+    if(e.target.closest('[data-open-trainer-calendar]')){openTrainerCalendar();return;}
+    const button=e.target.closest('[data-trainer-view]');if(button)changeTrainerView(button.dataset.trainerView);
+  };
+  $('ownerTrainerNav').onclick=handleTrainerNavClick;
+  $('regularTrainerNav').onclick=handleTrainerNavClick;
+  $('closeTrainerCalendar').onclick=closeTrainerCalendar;
+  $('trainerCalendarModal').onclick=e=>{if(e.target===$('trainerCalendarModal'))closeTrainerCalendar();};
+  $('trainerCalendarPrev').onclick=async()=>{trainerCalendarMonth=new Date(trainerCalendarMonth.getFullYear(),trainerCalendarMonth.getMonth()-1,1);trainerCalendarDate='';trainerCalendarSlot=null;await loadTrainerCalendarAvailability();renderTrainerCalendar();};
+  $('trainerCalendarNext').onclick=async()=>{trainerCalendarMonth=new Date(trainerCalendarMonth.getFullYear(),trainerCalendarMonth.getMonth()+1,1);trainerCalendarDate='';trainerCalendarSlot=null;await loadTrainerCalendarAvailability();renderTrainerCalendar();};
+  $('trainerCalendarDays').onclick=e=>{const button=e.target.closest('[data-calendar-day]');if(!button)return;trainerCalendarDate=button.dataset.calendarDay;trainerCalendarSlot=null;renderTrainerCalendar();};
+  $('trainerCalendarDetails').onclick=async e=>{
+    const addBooking=e.target.closest('[data-calendar-add-booking]');
+    if(addBooking){
+      const memberName=$('trainerCalendarMember')?.value||'';
+      if(!memberName){notify('Selecciona un socio activo para añadir la reserva.');return;}
+      addBooking.disabled=true;
+      const {error}=await db.rpc('trainer_add_booking',{p_key:trainerKey,p_member_name:memberName,p_class_date:trainerCalendarDate,p_slot:trainerCalendarSlot});
+      if(error){showDbError(error);addBooking.disabled=false;return;}
+      await fetchTrainerData();await loadCounts();renderTrainerCalendar();notify(`Reserva añadida para ${memberName}.`);return;
+    }
+    const warning=e.target.closest('[data-calendar-warning]');
+    if(warning){
+      const absent=warning.dataset.warningAction==='mark';
+      if(absent&&!window.confirm('¿Confirmas que este socio no asistió a la clase reservada? Se registrará un warning en su historial.'))return;
+      if(!absent&&!window.confirm('¿Quieres anular este warning?'))return;
+      warning.disabled=true;
+      const {error}=await db.rpc('set_absence',{p_key:trainerKey,p_booking_id:warning.dataset.calendarWarning,p_absent:absent});
+      if(error){showDbError(error);warning.disabled=false;return;}
+      await fetchTrainerData();renderTrainerCalendar();notify(absent?'Warning registrado en el historial del socio.':'Warning anulado.');return;
+    }
+    const cancel=e.target.closest('[data-calendar-cancel]');
+    if(cancel){
+      if(trainerData?.is_owner!==true){notify('Solo Fernando puede cancelar reservas desde el calendario.');return;}
+      if(classHasStarted(fromIsoDate(trainerCalendarDate),trainerCalendarSlot)){notify('No se puede cancelar una reserva cuando la clase ya ha empezado.');return;}
+      if(!window.confirm('¿Quieres cancelar esta reserva? Se guardará en el historial del socio.'))return;
+      cancel.disabled=true;
+      const {error}=await db.rpc('trainer_cancel_booking',{p_key:trainerKey,p_booking_id:cancel.dataset.calendarCancel});
+      if(error){showDbError(error);cancel.disabled=false;return;}
+      await fetchTrainerData();await loadCounts();renderTrainerCalendar();notify('Reserva cancelada y registrada en el historial.');return;
+    }
+    const button=e.target.closest('[data-calendar-slot]');if(!button)return;trainerCalendarSlot=Number(button.dataset.calendarSlot);renderTrainerCalendarDetails();
+  };
   $('showAddMemberOwner').onclick=()=>changeTrainerView('addMember');
   const openSchedule=async()=>{
     if(trainerData?.is_owner!==true){notify('Solo Fernando puede gestionar los horarios.');return;}
@@ -340,6 +458,15 @@
   $('newMemberName').onkeydown=e=>{if(e.key==='Enter')$('addMemberButton').click();};
   $('logoutTrainer').onclick=()=>setTrainerPanel(false);
   $('historyMembers').onclick=async e=>{
+    const statusButton=e.target.closest('[data-toggle-member-active]');
+    if(statusButton){
+      if(trainerData?.is_owner!==true){notify('Solo Fernando puede activar o desactivar socios.');return;}
+      const name=statusButton.dataset.toggleMemberActive,active=statusButton.dataset.nextActive==='true';
+      statusButton.disabled=true;
+      const {error}=await db.rpc('trainer_set_member_active',{p_key:trainerKey,p_member_name:name,p_is_active:active});
+      if(error){showDbError(error);statusButton.disabled=false;return;}
+      await fetchTrainerData();renderTrainerView();notify(active?`${name} está activo y puede reservar.`:`${name} está desactivado y ya no puede reservar.`);return;
+    }
     const clearOne=e.target.closest('[data-clear-member-history]');
     if(clearOne){
       if(trainerData?.is_owner!==true){notify('Solo Fernando puede borrar historiales de socios.');return;}
@@ -399,5 +526,5 @@
   render();
   if(ready)loadCounts();
   else $('classlist').innerHTML='<div class="empty">Para activar reservas compartidas, configura Supabase en <strong>config.js</strong> y ejecuta <strong>schema.sql</strong> en su editor SQL.</div>';
-  setInterval(async()=>{if(!ready)return;await loadCounts();if(trainerKey){try{await fetchTrainerData();renderTrainerView();}catch(e){}}},30000);
+  setInterval(async()=>{if(!ready)return;await loadCounts();if(trainerKey){try{await fetchTrainerData();renderTrainerView();if(!$('trainerCalendarModal').hidden)renderTrainerCalendar();}catch(e){}}},30000);
 })();
