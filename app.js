@@ -35,7 +35,12 @@
   function localDay(date) { return new Date(date.getFullYear(),date.getMonth(),date.getDate()); }
   function isBookable(date) { const today=localDay(new Date()), limit=new Date(today); limit.setDate(limit.getDate()+7); const day=localDay(date); return day>=today && day<=limit; }
   function classStart(date,slot) { const [h,m]=TIMES[slot].slice(0,5).split(':').map(Number); return new Date(date.getFullYear(),date.getMonth(),date.getDate(),h,m); }
-  function classHasEnded(date,slot) { const [h,m]=END_TIMES[slot].split(':').map(Number); return new Date(date.getFullYear(),date.getMonth(),date.getDate(),h,m)<new Date(); }
+  function classHasEnded(date,slot) {
+    const nowParts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date());
+    const part=type=>nowParts.find(item=>item.type===type)?.value||'00';
+    const madridNow=`${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}:${part('second')}`;
+    return `${dateKey(date)}T${END_TIMES[slot]}:00`<madridNow;
+  }
   function displayDate(date, options={weekday:'long',day:'numeric',month:'long'}) { const value=new Intl.DateTimeFormat('es-ES',options).format(date); return value.charAt(0).toUpperCase()+value.slice(1); }
   function fromIsoDate(value) { return new Date(`${value}T12:00:00`); }
   async function loadCounts() {
